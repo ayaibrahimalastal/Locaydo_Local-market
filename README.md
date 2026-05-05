@@ -34,8 +34,8 @@ Locaydo is a mobile-based online marketplace application designed to organize an
 - [Testing](#-testing)
 - [Build & Deployment](#-build--deployment)
 - [Team & Contribution](#-team--contribution)
-- [Known Issues](#-known-issues)
-- [Future Roadmap](#-future-roadmap)
+- [Known Issues](#known-issues)
+- [Future Roadmap](#future-roadmap)
 - [License](#-license)
 
 ---
@@ -55,7 +55,7 @@ Online trading in Gaza heavily relies on informal social media platforms (Facebo
 
 Locaydo provides a centralized, mobile-first marketplace featuring:
 
-- ✅ Structured product categories (Electronics, Clothing, Furniture, Real Estate, Donations)
+- ✅ Structured product categories (Electronics, Clothing, Furniture, Real Estate, Donations,...)
 - ✅ Seller verification and rating system
 - ✅ Direct communication via WhatsApp/Phone
 - ✅ Optimized performance for Gaza's internet conditions
@@ -113,7 +113,7 @@ Locaydo provides a centralized, mobile-first marketplace featuring:
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/ayaibrahimalastal/Locaydo.git
+   git clone https://github.com/ayaibrahimalastal/Locaydo_Local-market.git
    cd Locaydo
    ```
 
@@ -168,7 +168,8 @@ lib/
 │   └── seller/             # Public seller profile view
 │
 └── shared/
-    ├── screens/            # NotFoundPage
+    ├── models/             #bottom_sheet_option
+    ├── screens/            # loading_screen
     └── widgets/            # Reusable UI components
         ├── common/         # Button, FavoriteButton, SmartAvatar …
         ├── form/           # Input, PhoneInput, ImageUploader …
@@ -265,7 +266,7 @@ flutter build ipa --release
 
 ---
 
-## ⚠️ Known Issues
+##  Known Issues
 
 | Issue | Status |
 |-------|--------|
@@ -275,7 +276,7 @@ flutter build ipa --release
 
 ---
 
-## 🗺️ Future Roadmap
+##  Future Roadmap
 
 **v1.1** — Push notifications, improved offline support, report feature  
 **v2.0** — In-app chat, electronic payments, delivery tracking  
@@ -285,7 +286,31 @@ flutter build ipa --release
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License.
+
+```
+MIT License
+
+Copyright (c) 2026 Locaydo Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ---
 
