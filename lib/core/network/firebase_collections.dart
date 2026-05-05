@@ -5,6 +5,5 @@ class FirebaseCollections {
   static const String users     = 'users';
   static const String products  = 'products';
   static const String sellers   = 'sellers';
-  static const String favorites = 'favorites';
-  static const String ratings   = 'ratings';
+  static const String categories = 'categories';
 }
