@@ -71,4 +71,6 @@ class LoginViewModel extends ChangeNotifier {
     passwordController.dispose();
     super.dispose();
   }
+
+  void validate() {}
 }
