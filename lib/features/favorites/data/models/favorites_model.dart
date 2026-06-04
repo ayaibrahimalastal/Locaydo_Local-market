@@ -9,6 +9,7 @@ class FavoriteProduct {
   final String imageUrl;
   final List<PaymentMethod> paymentMethods;
   final bool isFavorite;
+   final bool? isSold; 
 
   FavoriteProduct({
     required this.id,
@@ -19,6 +20,7 @@ class FavoriteProduct {
     required this.imageUrl,
     required this.paymentMethods,
     this.isFavorite = true,
+     this.isSold,
   });
 }
 

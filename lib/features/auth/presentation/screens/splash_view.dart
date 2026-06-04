@@ -1,6 +1,8 @@
 // lib/features/auth/presentation/screens/splash_view.dart
+
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart'; // ✅ إضافة import
 import 'package:locaydo_app/core/constants/app_assets.dart';
 import 'package:locaydo_app/core/constants/app_strings.dart';
 import 'package:locaydo_app/core/extensions/context_extensions.dart';
@@ -36,20 +38,17 @@ class _SplashViewState extends State<SplashView>
     super.initState();
     _initAnimations();
     _startNavigationTimer();
+    
+    // ✅ التأكد من إخفاء Native Splash إذا كانت لا تزال ظاهرة
+    FlutterNativeSplash.remove();
   }
 
   void _initAnimations() {
-    // ✅ استخدام AnimationController من AppAnimations
     _controller = AppAnimations.createFadeSlideController(this);
-    
-    // ✅ أنيميشن Fade (من AppAnimations)
     _fadeAnimation = AppAnimations.createFadeAnimation(_controller);
-    
-    // ✅ أنيميشن Scale (خاص بـ Splash)
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
     );
-    
     _controller.forward();
   }
 
@@ -60,11 +59,9 @@ class _SplashViewState extends State<SplashView>
   void _onNavigationComplete() {
     if (!mounted) return;
     
-    // ✅ استدعاء callback من main.dart
     if (widget.onNavigationComplete != null) {
       widget.onNavigationComplete!();
     } else {
-      // ✅ إذا لم يوجد callback، ينتقل لـ Welcome (كحل احتياطي)
       Navigator.pushReplacementNamed(context, AppRoutes.welcome);
     }
   }

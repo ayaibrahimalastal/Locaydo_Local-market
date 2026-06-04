@@ -101,7 +101,7 @@ class SellerProductsViewModel extends ChangeNotifier {
     final originalProduct = product;
     
     try {
-      // 1. تحديث الواجهة فوراً
+      // 1. تحديث الواجهة فوراً (optimistic update)
       _logger.log('📱 Updating UI - removing from available...');
       _availableProducts.removeWhere((p) => p.id == product.id);
       final updatedProduct = product.copyWith(status: ProductStatus.sold);
@@ -114,10 +114,22 @@ class SellerProductsViewModel extends ChangeNotifier {
       _homeViewModel?.removeProduct(product.id);
       _homeViewModel?.refreshFavoritesCache();
       
-      // 3. تحديث قاعدة البيانات
-      _logger.log('💾 Updating Firebase...');
-      await _productRepository.markAsSold(product.id);
-      _logger.log('💾 Firebase updated successfully!');
+      // 3. استخدام batch لتحديث Firebase
+      _logger.log('💾 Updating Firebase with batch...');
+      final batch = FirebaseFirestore.instance.batch();
+      
+      final productRef = FirebaseFirestore.instance
+          .collection(FirebaseCollections.products)
+          .doc(product.id);
+      
+      batch.update(productRef, {
+        'status': ProductStatus.sold.name,
+        'soldAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      await batch.commit();
+      _logger.log('💾 Batch commit successful!');
       
       // 4. إعادة تحميل المنتجات للتأكد
       _logger.log('🔄 Refreshing products...');
@@ -156,8 +168,18 @@ class SellerProductsViewModel extends ChangeNotifier {
       
       notifyListeners();
       
-      await _productRepository.deleteProduct(product.id);
+      // استخدام batch لحذف المنتج فقط (نفس الكود القديم ولكن مع batch)
+      final batch = FirebaseFirestore.instance.batch();
+      
+      final productRef = FirebaseFirestore.instance
+          .collection(FirebaseCollections.products)
+          .doc(product.id);
+      
+      batch.delete(productRef);
+      
+      await batch.commit();
       _logger.log('✅ Product deleted successfully');
+      
       await _homeViewModel?.refreshProducts();
       
     } catch (e) {

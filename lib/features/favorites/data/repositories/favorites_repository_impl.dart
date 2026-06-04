@@ -1,3 +1,5 @@
+// lib/features/favorites/data/repositories/favorites_repository_impl.dart
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:locaydo_app/core/enums/product_enums.dart';
@@ -34,6 +36,8 @@ class FavoritesRepositoryImpl implements FavoritesRepository {
         .doc(_currentUserId)
         .collection('favoriteSellers');
   }
+
+  // ==================== PRODUCT FAVORITES ====================
 
   @override
   Future<List<FavoriteProduct>> getFavoriteProducts() async {
@@ -291,8 +295,8 @@ class FavoritesRepositoryImpl implements FavoritesRepository {
     }
   }
 
-  // ✅ ── Favorites (Sellers) ─────────────────────────────────────────
-  
+  // ==================== SELLER FAVORITES ====================
+
   @override
   Future<void> addSellerToFavorites(String sellerId) async {
     try {
@@ -455,13 +459,79 @@ class FavoritesRepositoryImpl implements FavoritesRepository {
     }
   }
 
-  // ── Private helpers ─────────────────────────────────────────
-  
+  // ==================== STREAMS FOR REAL-TIME UPDATES ====================
+
+  @override
+  Stream<Map<String, bool>> watchAllFavorites() {
+    try {
+      if (_currentUserId.isEmpty) {
+        _logger.log('⚠️ No user logged in for favorites stream');
+        return Stream.value({});
+      }
+      
+      _logger.log('📡 Setting up real-time stream for all favorites');
+      return _favoriteProductsCollection.snapshots().map((snapshot) {
+        final favorites = <String, bool>{};
+        for (final doc in snapshot.docs) {
+          favorites[doc.id] = true;
+        }
+        _logger.log('📡 Favorites stream update: ${favorites.length} items');
+        return favorites;
+      });
+    } catch (e) {
+      _logger.error('❌ Failed to watch favorites', e);
+      return Stream.error(e);
+    }
+  }
+
+  @override
+  Stream<List<String>> watchFavoriteProductIds() {
+    try {
+      if (_currentUserId.isEmpty) {
+        _logger.log('⚠️ No user logged in for favorite product IDs stream');
+        return Stream.value([]);
+      }
+      
+      _logger.log('📡 Setting up real-time stream for favorite product IDs');
+      return _favoriteProductsCollection.snapshots().map((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toList();
+        _logger.log('📡 Favorite product IDs stream update: ${ids.length} items');
+        return ids;
+      });
+    } catch (e) {
+      _logger.error('❌ Failed to watch favorite product IDs', e);
+      return Stream.error(e);
+    }
+  }
+
+  @override
+  Stream<List<String>> watchFavoriteSellerIds() {
+    try {
+      if (_currentUserId.isEmpty) {
+        _logger.log('⚠️ No user logged in for favorite seller IDs stream');
+        return Stream.value([]);
+      }
+      
+      _logger.log('📡 Setting up real-time stream for favorite seller IDs');
+      return _favoriteSellersCollection.snapshots().map((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toList();
+        _logger.log('📡 Favorite seller IDs stream update: ${ids.length} items');
+        return ids;
+      });
+    } catch (e) {
+      _logger.error('❌ Failed to watch favorite seller IDs', e);
+      return Stream.error(e);
+    }
+  }
+
+  // ==================== PRIVATE HELPERS ====================
+
   Future<bool> _isSellerExists(String sellerId) async {
     try {
       final doc = await _firestore.collection('sellers').doc(sellerId).get();
       return doc.exists;
     } catch (e) {
+      _logger.error('❌ Failed to check if seller exists: $sellerId', e);
       return false;
     }
   }

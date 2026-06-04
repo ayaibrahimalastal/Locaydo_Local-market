@@ -1,3 +1,5 @@
+// lib/features/favorites/presentation/viewmodels/favorites_viewmodel.dart
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,9 +25,17 @@ class FavoritesViewModel extends ChangeNotifier {
   List<FavoriteSeller> _favoriteSellers = [];
 
   bool isLoading = false;
+  bool isInitialLoad = true;
   String? errorMessage;
   
   final Set<String> _pendingUpdates = {};
+  
+  // Stream subscriptions for real-time updates
+  StreamSubscription<Map<String, bool>>? _favoritesStreamSubscription;
+  StreamSubscription<List<String>>? _favoriteSellersStreamSubscription;
+  
+  // Cache for product existence
+  final Map<String, bool> _productExistsCache = {};
 
   List<FavoriteProduct> get favoriteProducts => _favoriteProducts;
   List<FavoriteSeller> get favoriteSellers => _favoriteSellers;
@@ -39,37 +49,199 @@ class FavoritesViewModel extends ChangeNotifier {
         _homeViewModel = homeViewModel {
     
     if (_homeViewModel != null) {
-      _homeViewModel!.addFavoriteListener(() {
-        _logger.log('🔄 Favorite changed in HomeViewModel, syncing...');
-        _syncFavoriteFromHomeViewModel();
-      });
-      
-      _homeViewModel!.addFavoritesViewModelListener(() {
-        _logger.log('🔄 Immediate favorite update from HomeViewModel');
-        _syncFavoriteFromHomeViewModel();
-      });
-      
-      _homeViewModel!.addListener(_onHomeViewModelChanged);
+      _homeViewModel!.addFavoriteListener(_onHomeViewModelFavoriteChanged);
+      _homeViewModel!.addFavoritesViewModelListener(_onHomeViewModelFavoriteChanged);
+      _homeViewModel!.addListener(_onHomeViewModelGeneralChanged);
     }
     
-    loadFavoriteProducts();
-    loadFavoriteSellers();
+    _initialize();
   }
   
-  void _onHomeViewModelChanged() {
-    _logger.log('🔄 HomeViewModel general change detected, refreshing favorites...');
-    _syncFavoriteFromHomeViewModel();
+  Future<void> _initialize() async {
+    isLoading = true;
+    isInitialLoad = true;
+    notifyListeners();
+    
+    await Future.wait([
+      loadFavoriteProducts(),
+      loadFavoriteSellers(),
+    ]);
+    
+    isLoading = false;
+    isInitialLoad = false;
+    notifyListeners();
+    
+    _setupRealtimeStreams();
   }
   
-  Future<void> _syncFavoriteFromHomeViewModel() async {
-    if (_homeViewModel == null) return;
+  void _setupRealtimeStreams() {
+    _logger.log('📡 Setting up real-time favorites streams...');
+    
+    _favoritesStreamSubscription = _repository.watchAllFavorites().listen(
+      _syncFavoritesFromStream,
+      onError: (error) {
+        _logger.error('❌ Favorites stream error', error);
+      },
+    );
+    
+    _favoriteSellersStreamSubscription = _repository.watchFavoriteSellerIds().listen(
+      (sellerIds) async {
+        _logger.log('👤 Real-time sellers update: ${sellerIds.length} sellers');
+        await _syncSellersFromStream(sellerIds);
+      },
+      onError: (error) {
+        _logger.error('❌ Seller favorites stream error', error);
+      },
+    );
+  }
+  
+  Future<void> _syncFavoritesFromStream(Map<String, bool> favoritesMap) async {
+    if (_pendingUpdates.isNotEmpty) {
+      _logger.log('⏳ Skipping stream sync due to pending updates');
+      return;
+    }
+    
+    final newFavoriteProducts = <FavoriteProduct>[];
+    
+    for (final productId in favoritesMap.keys) {
+      final productExists = await _checkProductExists(productId);
+      if (!productExists) {
+        _logger.log('🗑️ Product $productId no longer exists, removing from favorites');
+        await _repository.removeFromFavorites(productId);
+        continue;
+      }
+      
+      final product = await _getProductDetailsIncludingSold(productId);
+      if (product != null) {
+        newFavoriteProducts.add(FavoriteProduct(
+          id: product.id,
+          title: product.title,
+          price: product.price,
+          currency: product.currency,
+          location: product.location,
+          imageUrl: product.imageUrl,
+          paymentMethods: product.paymentMethods,
+          isFavorite: true,
+          isSold: product.isSold,
+        ));
+      }
+    }
+    
+    if (!_areFavoriteListsEqual(_favoriteProducts, newFavoriteProducts)) {
+      _favoriteProducts = newFavoriteProducts;
+      _logger.log('✅ Synced ${_favoriteProducts.length} favorites from stream');
+      notifyListeners();
+    }
+  }
+  
+  Future<void> _syncSellersFromStream(List<String> sellerIds) async {
+    if (_pendingUpdates.contains('seller_batch')) {
+      _logger.log('⏳ Skipping seller stream sync due to pending updates');
+      return;
+    }
+    
+    final newSellers = <FavoriteSeller>[];
+    
+    for (final sellerId in sellerIds) {
+      final seller = await _getSellerDetails(sellerId);
+      if (seller != null) {
+        newSellers.add(seller);
+      } else {
+        _logger.log('🗑️ Seller $sellerId not found, cleaning up');
+        await _repository.removeSellerFromFavorites(sellerId);
+      }
+    }
+    
+    if (!_areSellerListsEqual(_favoriteSellers, newSellers)) {
+      _favoriteSellers = newSellers;
+      _logger.log('✅ Synced ${_favoriteSellers.length} sellers from stream');
+      notifyListeners();
+    }
+  }
+  
+  Future<bool> _checkProductExists(String productId) async {
+    if (_productExistsCache.containsKey(productId)) {
+      return _productExistsCache[productId]!;
+    }
+    
+    final exists = await _repository.isProductExists(productId);
+    _productExistsCache[productId] = exists;
+    return exists;
+  }
+  
+  Future<ProductModel?> _getProductDetailsIncludingSold(String productId) async {
+    if (_homeViewModel != null) {
+      final product = _homeViewModel!.getProductByIdIncludingSold(productId);
+      if (product != null) return product;
+    }
+    
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('products')
+          .doc(productId)
+          .get();
+      
+      if (doc.exists) {
+        return ProductModel.fromMap(doc.data()!, doc.id);
+      }
+    } catch (e) {
+      _logger.error('Failed to get product details: $productId', e);
+    }
+    
+    return null;
+  }
+  
+  Future<FavoriteSeller?> _getSellerDetails(String sellerId) async {
+    try {
+      final sellerDoc = await FirebaseFirestore.instance
+          .collection('sellers')
+          .doc(sellerId)
+          .get();
+      
+      if (sellerDoc.exists) {
+        final data = sellerDoc.data()!;
+        
+        final productsSnapshot = await FirebaseFirestore.instance
+            .collection('products')
+            .where('sellerId', isEqualTo: data['userId'])
+            .get();
+        
+        return FavoriteSeller(
+          id: sellerId,
+          name: data['name'] ?? '',
+          rating: (data['rating'] ?? 0).toDouble(),
+          totalRatings: data['totalRatings'] ?? 0,
+          imageUrl: data['avatarUrl'],
+          productCount: productsSnapshot.docs.length,
+          isFollowed: true,
+          imageVersion: data['imageVersion'] ?? 1,
+        );
+      }
+    } catch (e) {
+      _logger.error('Failed to get seller details: $sellerId', e);
+    }
+    
+    return null;
+  }
+
+  void _onHomeViewModelFavoriteChanged() {
+    _logger.log('🔄 HomeViewModel favorite changed, refreshing...');
+    _syncFavoritesFromHomeViewModel();
+  }
+  
+  void _onHomeViewModelGeneralChanged() {
+    _logger.log('🔄 HomeViewModel general change detected');
+    _syncFavoritesFromHomeViewModel();
+  }
+  
+  Future<void> _syncFavoritesFromHomeViewModel() async {
+    if (_homeViewModel == null || _pendingUpdates.isNotEmpty) return;
     
     final allProducts = _homeViewModel!.allProducts;
     final newFavoriteProducts = <FavoriteProduct>[];
     
     for (final product in allProducts) {
       if (_pendingUpdates.contains(product.id)) {
-        _logger.log('⚠️ Skipping sync for product with pending update: ${product.id}');
         continue;
       }
       
@@ -83,6 +255,7 @@ class FavoritesViewModel extends ChangeNotifier {
           imageUrl: product.imageUrl,
           paymentMethods: product.paymentMethods,
           isFavorite: true,
+          isSold: product.isSold,
         ));
       }
     }
@@ -93,32 +266,18 @@ class FavoritesViewModel extends ChangeNotifier {
       _logger.log('✅ Synced ${_favoriteProducts.length} favorites from HomeViewModel');
     }
   }
-  
-  bool _areFavoriteListsEqual(List<FavoriteProduct> a, List<FavoriteProduct> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i].id != b[i].id) return false;
-    }
-    return true;
-  }
 
-  /// ✅ تحميل المنتجات المفضلة
   Future<void> loadFavoriteProducts() async {
-    isLoading = true;
-    errorMessage = null;
-    notifyListeners();
-
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         _logger.log('⚠️ No user logged in!');
         errorMessage = 'الرجاء تسجيل الدخول أولاً';
-        isLoading = false;
         notifyListeners();
         return;
       }
       
-      _logger.log('👤 User: ${user.email}');
+      _logger.log('👤 Loading favorite products for user: ${user.email}');
       _favoriteProducts = await _repository.getFavoriteProducts();
       _logger.log('✅ Loaded ${_favoriteProducts.length} favorite products');
       
@@ -128,12 +287,10 @@ class FavoritesViewModel extends ChangeNotifier {
       errorMessage = 'فشل تحميل المفضلة';
       _logger.error('❌ Failed to load favorites', e);
     } finally {
-      isLoading = false;
       notifyListeners();
     }
   }
 
-  /// ✅ تحميل البائعين المفضلين (مع جلب أحدث البيانات من sellers collection)
   Future<void> loadFavoriteSellers() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
@@ -154,26 +311,11 @@ class FavoritesViewModel extends ChangeNotifier {
       final sellers = <FavoriteSeller>[];
       
       for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
         final sellerId = doc.id;
+        final seller = await _getSellerDetails(sellerId);
         
-        final sellerDoc = await FirebaseFirestore.instance
-            .collection('sellers')
-            .doc(sellerId)
-            .get();
-        
-        if (sellerDoc.exists) {
-          final sellerData = sellerDoc.data()!;
-          sellers.add(FavoriteSeller(
-            id: sellerId,
-            name: sellerData['name'] ?? data['name'] ?? '',
-            rating: (sellerData['rating'] ?? data['rating'] ?? 0).toDouble(),
-            totalRatings: sellerData['totalRatings'] ?? data['totalRatings'] ?? 0,
-            imageUrl: sellerData['avatarUrl'] ?? data['imageUrl'],
-            productCount: sellerData['productCount'] ?? data['productCount'] ?? 0,
-            isFollowed: true,
-            imageVersion: sellerData['imageVersion'] ?? data['imageVersion'] ?? 0,
-          ));
+        if (seller != null) {
+          sellers.add(seller);
         } else {
           _logger.log('🗑️ Cleaning invalid favorite seller: $sellerId');
           await doc.reference.delete();
@@ -181,7 +323,7 @@ class FavoritesViewModel extends ChangeNotifier {
       }
       
       _favoriteSellers = sellers;
-      _logger.log('✅ Loaded ${_favoriteSellers.length} favorite sellers (with latest data)');
+      _logger.log('✅ Loaded ${_favoriteSellers.length} favorite sellers');
       notifyListeners();
       
     } catch (e) {
@@ -197,7 +339,7 @@ class FavoritesViewModel extends ChangeNotifier {
       if (productExists) {
         validProducts.add(product);
       } else {
-        _logger.log('🗑️ Removing invalid favorite: ${product.title} (ID: ${product.id})');
+        _logger.log('🗑️ Removing invalid favorite: ${product.title}');
         await _repository.removeFromFavorites(product.id);
       }
     }
@@ -209,7 +351,6 @@ class FavoritesViewModel extends ChangeNotifier {
     }
   }
 
-  /// ✅ إزالة منتج من المفضلة
   Future<void> toggleProductFavoriteFromList(String productId) async {
     final productIndex = _favoriteProducts.indexWhere((p) => p.id == productId);
     if (productIndex == -1) return;
@@ -231,6 +372,7 @@ class FavoritesViewModel extends ChangeNotifier {
       _repository.removeFromFavorites(productId).then((_) {
         _logger.log('✅ Product removed from favorites server: ${product.title}');
         _pendingUpdates.remove(productId);
+        _productExistsCache.remove(productId);
       }).catchError((e) {
         _logger.error('❌ Failed to remove from favorites server, reverting...', e);
         _favoriteProducts.insert(productIndex, product);
@@ -245,7 +387,6 @@ class FavoritesViewModel extends ChangeNotifier {
     }
   }
 
-  /// ✅ إضافة منتج إلى المفضلة
   Future<bool> addProductToFavorites(ProductModel product) async {
     if (_pendingUpdates.contains(product.id)) {
       _logger.log('⚠️ Update already pending for ${product.id}, skipping');
@@ -264,6 +405,7 @@ class FavoritesViewModel extends ChangeNotifier {
       imageUrl: product.imageUrl,
       paymentMethods: product.paymentMethods,
       isFavorite: true,
+      isSold: product.isSold,
     );
     
     _favoriteProducts.insert(0, newFavorite);
@@ -273,6 +415,7 @@ class FavoritesViewModel extends ChangeNotifier {
       _repository.addToFavorites(product).then((_) {
         _logger.log('✅ Product added to favorites server: ${product.title}');
         _pendingUpdates.remove(product.id);
+        _productExistsCache[product.id] = true;
       }).catchError((e) {
         _logger.error('❌ Failed to add to favorites server, reverting...', e);
         _favoriteProducts.removeWhere((p) => p.id == product.id);
@@ -289,7 +432,6 @@ class FavoritesViewModel extends ChangeNotifier {
     return true;
   }
 
-  /// ✅ متابعة/إلغاء متابعة بائع مع تحديث HomeViewModel
   Future<void> toggleSellerFollow(String sellerId) async {
     if (_pendingUpdates.contains('seller_$sellerId')) {
       _logger.log('⚠️ Update already pending for seller $sellerId, skipping');
@@ -298,54 +440,15 @@ class FavoritesViewModel extends ChangeNotifier {
     _pendingUpdates.add('seller_$sellerId');
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        _logger.log('⚠️ No user logged in');
-        _pendingUpdates.remove('seller_$sellerId');
-        return;
-      }
+      final isCurrentlyFollowed = _favoriteSellers.any((s) => s.id == sellerId);
       
-      final docRef = FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .collection('favoriteSellers')
-          .doc(sellerId);
-      
-      final doc = await docRef.get();
-      final isCurrentlyFollowed = doc.exists;
-      
-      // ✅ تحديث الواجهة فوراً
       if (isCurrentlyFollowed) {
-        // إلغاء المتابعة
         _favoriteSellers.removeWhere((s) => s.id == sellerId);
         _logger.log('🗑️ Seller unfollowed from UI: $sellerId');
       } else {
-        // متابعة
-        final sellerDoc = await FirebaseFirestore.instance
-            .collection('sellers')
-            .doc(sellerId)
-            .get();
-        
-        if (sellerDoc.exists) {
-          final data = sellerDoc.data()!;
-          
-          final productsSnapshot = await FirebaseFirestore.instance
-              .collection('products')
-              .where('sellerId', isEqualTo: data['userId'])
-              .get();
-          
-          final newSeller = FavoriteSeller(
-            id: sellerId,
-            name: data['name'] ?? '',
-            rating: (data['rating'] ?? 0).toDouble(),
-            totalRatings: data['totalRatings'] ?? 0,
-            imageUrl: data['avatarUrl'],
-            productCount: productsSnapshot.docs.length,
-            isFollowed: true,
-            imageVersion: data['imageVersion'] ?? 1,
-          );
-          
-          _favoriteSellers.insert(0, newSeller);
+        final seller = await _getSellerDetails(sellerId);
+        if (seller != null) {
+          _favoriteSellers.insert(0, seller);
           _logger.log('❤️ Seller followed from UI: $sellerId');
         } else {
           _logger.log('⚠️ Seller not found: $sellerId');
@@ -356,7 +459,6 @@ class FavoritesViewModel extends ChangeNotifier {
       
       notifyListeners();
       
-      // ✅ تحديث قاعدة البيانات في الخلفية
       unawaited(
         (isCurrentlyFollowed
             ? _repository.removeSellerFromFavorites(sellerId)
@@ -367,12 +469,9 @@ class FavoritesViewModel extends ChangeNotifier {
             })
             .catchError((e) {
               _logger.error('❌ Failed to update seller favorite on server, reverting...', e);
-              // التراجع عن التغيير
               if (isCurrentlyFollowed) {
-                // إعادة إضافة البائع
                 _loadSellerAndAddToFavorites(sellerId);
               } else {
-                // إزالة البائع
                 _favoriteSellers.removeWhere((s) => s.id == sellerId);
               }
               notifyListeners();
@@ -381,7 +480,6 @@ class FavoritesViewModel extends ChangeNotifier {
             })
       );
       
-      // ✅ تحديث HomeViewModel
       if (_homeViewModel != null) {
         unawaited(_homeViewModel!.refreshFavoritesCache());
       }
@@ -393,38 +491,11 @@ class FavoritesViewModel extends ChangeNotifier {
     }
   }
   
-  /// ✅ مساعدة: تحميل البائع وإضافته إلى المفضلة
   Future<void> _loadSellerAndAddToFavorites(String sellerId) async {
-    try {
-      final sellerDoc = await FirebaseFirestore.instance
-          .collection('sellers')
-          .doc(sellerId)
-          .get();
-      
-      if (sellerDoc.exists) {
-        final data = sellerDoc.data()!;
-        
-        final productsSnapshot = await FirebaseFirestore.instance
-            .collection('products')
-            .where('sellerId', isEqualTo: data['userId'])
-            .get();
-        
-        final newSeller = FavoriteSeller(
-          id: sellerId,
-          name: data['name'] ?? '',
-          rating: (data['rating'] ?? 0).toDouble(),
-          totalRatings: data['totalRatings'] ?? 0,
-          imageUrl: data['avatarUrl'],
-          productCount: productsSnapshot.docs.length,
-          isFollowed: true,
-          imageVersion: data['imageVersion'] ?? 1,
-        );
-        
-        _favoriteSellers.insert(0, newSeller);
-        _logger.log('🔄 Seller re-added to favorites: $sellerId');
-      }
-    } catch (e) {
-      _logger.error('❌ Failed to reload seller: $sellerId', e);
+    final seller = await _getSellerDetails(sellerId);
+    if (seller != null && !_favoriteSellers.any((s) => s.id == sellerId)) {
+      _favoriteSellers.insert(0, seller);
+      _logger.log('🔄 Seller re-added to favorites: $sellerId');
     }
   }
 
@@ -450,19 +521,87 @@ class FavoritesViewModel extends ChangeNotifier {
   }
 
   Future<void> refreshFavorites() async {
+    _logger.log('🔄 Manual refresh requested');
+    _productExistsCache.clear();
     await Future.wait([
       loadFavoriteProducts(),
       loadFavoriteSellers(),
     ]);
   }
   
+  // ✅ ✅ ✅ دوال إدارة المستخدم (تسجيل الدخول/الخروج) ✅ ✅ ✅
+  
+  /// ✅ إعادة تهيئة عند تغيير المستخدم
+  Future<void> onUserChanged() async {
+    _logger.log('👤 User changed, reinitializing FavoritesViewModel...');
+    
+    // إلغاء الاشتراك من الـ Streams القديمة
+    _favoritesStreamSubscription?.cancel();
+    _favoriteSellersStreamSubscription?.cancel();
+    
+    // مسح البيانات
+    _favoriteProducts.clear();
+    _favoriteSellers.clear();
+    _productExistsCache.clear();
+    _pendingUpdates.clear();
+    
+    // إعادة تعيين المتغيرات
+    activeTab = FavoritesTab.products;
+    isLoading = true;
+    isInitialLoad = true;
+    errorMessage = null;
+    
+    notifyListeners();
+    
+    // إعادة تحميل البيانات
+    await _initialize();
+    
+    _logger.log('✅ FavoritesViewModel reinitialized successfully');
+  }
+
+  /// ✅ تنظيف البيانات (عند تسجيل الخروج)
+  void clearAllData() {
+    _logger.log('🗑️ Clearing all FavoritesViewModel data...');
+    
+    _favoriteProducts.clear();
+    _favoriteSellers.clear();
+    _productExistsCache.clear();
+    _pendingUpdates.clear();
+    
+    isLoading = false;
+    isInitialLoad = false;
+    errorMessage = null;
+    
+    notifyListeners();
+  }
+  
+  bool _areFavoriteListsEqual(List<FavoriteProduct> a, List<FavoriteProduct> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+  
+  bool _areSellerListsEqual(List<FavoriteSeller> a, List<FavoriteSeller> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+  
   @override
   void dispose() {
+    _favoritesStreamSubscription?.cancel();
+    _favoriteSellersStreamSubscription?.cancel();
+    
     if (_homeViewModel != null) {
-      _homeViewModel!.removeFavoriteListener(() {});
-      _homeViewModel!.removeFavoritesViewModelListener(() {});
-      _homeViewModel!.removeListener(_onHomeViewModelChanged);
+      _homeViewModel!.removeFavoriteListener(_onHomeViewModelFavoriteChanged);
+      _homeViewModel!.removeFavoritesViewModelListener(_onHomeViewModelFavoriteChanged);
+      _homeViewModel!.removeListener(_onHomeViewModelGeneralChanged);
     }
+    
     super.dispose();
   }
 }

@@ -75,11 +75,14 @@ class ProductCard extends StatelessWidget {
                 children: [
                   _buildProductImage(context),
                   if (showFavoriteButton)
-                    FavoriteButton(
-                      isFavorite: _isFavorite, // ✅ استخدام المتغير الجديد
-                      onTap: onFavoriteTap,
-                      position: favoritePosition,
-                      size: FavoriteButtonSize.medium,
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: FavoriteButton(
+                        isFavorite: _isFavorite, // ✅ استخدام المتغير الجديد
+                        onTap: onFavoriteTap,
+                        position: favoritePosition,
+                        size: FavoriteButtonSize.medium,
+                      ),
                     ),
                 ],
               ),

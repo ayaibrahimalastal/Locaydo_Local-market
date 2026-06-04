@@ -2,6 +2,7 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:locaydo_app/core/theme/app_colors.dart';
 import 'package:locaydo_app/core/theme/app_text_styles.dart';
 import 'package:locaydo_app/core/utils/bottom_sheet_helper.dart';
@@ -55,109 +56,11 @@ class MultiImageUploaderWidget extends StatelessWidget {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: AppTextStyles.bodySmall(context).copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 8),
-        
-        // ✅ عرض الصور المرفوعة
-        if (imagePaths.isNotEmpty)
-          SizedBox(
-            height: 100,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: imagePaths.length,
-              itemBuilder: (ctx, i) {
-                return _buildImageItem(context, i);
-              },
-            ),
-          ),
-        
-        const SizedBox(height: 12),
-        
-        // ✅ زر إضافة صورة جديدة - تصميم ناعم
-        GestureDetector(
-          onTap: () => _handleAddImage(context),
-          child: Container(
-            width: double.infinity,
-            height: 50,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: errorText != null
-                    ? AppColors.errorFields
-                    : AppColors.stroke.withOpacity(0.3),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.add_photo_alternate_outlined,
-                  size:25,
-                  color: AppColors.textPlaceholder,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  imagePaths.isEmpty ? hintText : 'إضافة صورة أخرى',
-                  style: AppTextStyles.bodyMedium(context).copyWith(
-                    color: AppColors.textPlaceholder,
-                  ),
-                ),
-                if (imagePaths.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      '(${imagePaths.length}/$maxImages)',
-                      style: AppTextStyles.bodySmall(context).copyWith(
-                        color: AppColors.textPlaceholder,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        
-        if (errorText != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 14,
-                  color: AppColors.errorFields,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    errorText!,
-                    style: AppTextStyles.bodySmall(context).copyWith(
-                      color: AppColors.errorFields,
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
+  /// ✅ دالة مساعدة لتحديد نوع الصورة وعرضها بشكل صحيح
   Widget _buildImageItem(BuildContext context, int index) {
+    final imagePath = imagePaths[index];
+    final isNetworkImage = imagePath.startsWith('http');
+    
     return Container(
       width: 100,
       height: 100,
@@ -171,14 +74,49 @@ class MultiImageUploaderWidget extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.file(
-              File(imagePaths[index]),
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: AppColors.primary1.withOpacity(0.1),
-                child: const Icon(Icons.broken_image),
-              ),
-            ),
+            child: isNetworkImage
+                ? CachedNetworkImage(
+                    imageUrl: imagePath,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Container(
+                      color: AppColors.primary1.withOpacity(0.1),
+                      child: const Center(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.primary1,
+                        ),
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => Container(
+                      color: AppColors.primary1.withOpacity(0.1),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.broken_image,
+                            size: 30,
+                            color: AppColors.textPlaceholder,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'خطأ في التحميل',
+                            style: TextStyle(
+                              fontSize: 8,
+                              color: AppColors.textPlaceholder,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : Image.file(
+                    File(imagePath),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: AppColors.primary1.withOpacity(0.1),
+                      child: const Icon(Icons.broken_image),
+                    ),
+                  ),
           ),
           // ✅ زر الحذف
           Positioned(
@@ -238,8 +176,128 @@ class MultiImageUploaderWidget extends StatelessWidget {
                 ),
               ),
             ),
+          // ✅ علامة "مستضافة" للصور الموجودة مسبقاً
+          if (isNetworkImage && index != 0)
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'موجودة',
+                  style: TextStyle(
+                    fontSize: 8,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppTextStyles.bodySmall(context).copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        
+        // ✅ عرض الصور المرفوعة
+        if (imagePaths.isNotEmpty)
+          SizedBox(
+            height: 100,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: imagePaths.length,
+              itemBuilder: (ctx, i) => _buildImageItem(context, i),
+            ),
+          ),
+        
+        const SizedBox(height: 12),
+        
+        // ✅ زر إضافة صورة جديدة
+        GestureDetector(
+          onTap: () => _handleAddImage(context),
+          child: Container(
+            width: double.infinity,
+            height: 50,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: errorText != null
+                    ? AppColors.errorFields
+                    : AppColors.stroke.withOpacity(0.3),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.add_photo_alternate_outlined,
+                  size: 25,
+                  color: AppColors.textPlaceholder,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  imagePaths.isEmpty ? hintText : 'إضافة صورة أخرى',
+                  style: AppTextStyles.bodyMedium(context).copyWith(
+                    color: AppColors.textPlaceholder,
+                  ),
+                ),
+                if (imagePaths.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '(${imagePaths.length}/$maxImages)',
+                      style: AppTextStyles.bodySmall(context).copyWith(
+                        color: AppColors.textPlaceholder,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        
+        if (errorText != null)
+          Padding(
+          padding: const EdgeInsets.only(top: 8), 
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 14,
+                  color: AppColors.errorFields,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    errorText!,
+                    style: AppTextStyles.bodySmall(context).copyWith(
+                      color: AppColors.errorFields,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

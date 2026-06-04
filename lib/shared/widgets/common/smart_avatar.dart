@@ -64,10 +64,7 @@ class _SmartAvatarState extends State<SmartAvatar> {
     }
   }
 
-  void _removeImage() {
-    setState(() { _imagePath = null; _hasImage = false; });
-    widget.onImageChanged(null);
-  }
+
 
   void _showOptions() {
     final options = <BottomSheetOption>[
@@ -77,10 +74,6 @@ class _SmartAvatarState extends State<SmartAvatar> {
       BottomSheetOption(icon: Icons.camera_alt,
           title: AppStrings.takePhoto,
           onTap: _takePhoto, iconColor: AppColors.primary1),
-      if (_hasImage)
-        BottomSheetOption(icon: Icons.delete_outline,
-            title: AppStrings.deletePhoto,
-            onTap: _removeImage, iconColor: AppColors.errorFields),
     ];
     BottomSheetHelper.showOptions(context: context, options: options);
   }

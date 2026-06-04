@@ -3,8 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:locaydo_app/core/services/app_link_handler.dart';
+import 'package:locaydo_app/core/services/hive_cache_service.dart';
+import 'package:locaydo_app/core/utils/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'core/di/injection_container.dart';
 import 'core/routes/app_routes.dart';
@@ -38,16 +41,30 @@ import 'core/enums/product_enums.dart';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // ✅ استدعاء واحد فقط لـ ensureInitialized
+  final binding = WidgetsFlutterBinding.ensureInitialized();
   
+  // ✅ الحفاظ على شاشة الترحيب باستخدام نفس الـ binding
+  FlutterNativeSplash.preserve(widgetsBinding: binding);
+  
+  // ✅ تهيئة Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
-  // ✅ تعيين navigatorKey أولاً
+  // ✅ تهيئة Hive Cache Service
+  final hiveCacheService = HiveCacheService();
+  await hiveCacheService.init();
+  
+  if (kDebugMode) {
+    debugPrint('✅ Hive Cache Service initialized');
+    debugPrint('📦 Cached products count: ${hiveCacheService.getCachedProductsCount()}');
+  }
+  
+  // ✅ تعيين navigatorKey
   AppLinkHandler.setNavigatorKey(navigatorKey);
   
-  // ✅ ثم تهيئة معالج الروابط
+  // ✅ تهيئة معالج الروابط
   await AppLinkHandler.init();
   
   if (kDebugMode) {
@@ -55,29 +72,26 @@ void main() async {
     debugPrint('🚀 Starting application...');
   }
 
-  runApp(const LocaydoApp());
+  // ✅ إخفاء شاشة الترحيب بعد الانتهاء من التهيئة
+  FlutterNativeSplash.remove();
+
+  runApp(LocaydoApp(
+    hiveCacheService: hiveCacheService,
+  ));
 }
 
-class LocaydoApp extends StatefulWidget {
-  const LocaydoApp({super.key});
-
-  @override
-  State<LocaydoApp> createState() => _LocaydoAppState();
-}
-
-class _LocaydoAppState extends State<LocaydoApp> {
-  late final List<SingleChildWidget> _providers;
-
-  @override
-  void initState() {
-    super.initState();
-    _providers = buildProviders();
-  }
+class LocaydoApp extends StatelessWidget {
+  final HiveCacheService hiveCacheService;
+  
+  const LocaydoApp({
+    super.key,
+    required this.hiveCacheService,
+  });
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
-      providers: _providers,
+      providers: buildProviders(hiveCacheService: hiveCacheService),
       child: MaterialApp(
         title: 'Locaydo',
         debugShowCheckedModeBanner: false,
@@ -103,7 +117,7 @@ class _LocaydoAppState extends State<LocaydoApp> {
         debugPrint('👤 User is signed out! → Splash');
       }
       return SplashView(
-        splashDuration: const Duration(seconds: 2),
+        splashDuration: const Duration(seconds: 1),
       );
     }
   }
@@ -112,7 +126,6 @@ class _LocaydoAppState extends State<LocaydoApp> {
     if (kDebugMode) debugPrint(message);
   }
 
-  // ✅ رسالة تحميل موحدة
   Widget _buildLoadingScreen() {
     return const LoadingScreen(message: '');
   }
@@ -126,7 +139,7 @@ class _LocaydoAppState extends State<LocaydoApp> {
     switch (settings.name) {
       case AppRoutes.splash:
         return MaterialPageRoute(
-          builder: (context) => SplashView(splashDuration: const Duration(seconds: 2)),
+          builder: (context) => SplashView(splashDuration: const Duration(seconds: 1)),
         );
 
       case AppRoutes.welcome:
@@ -187,7 +200,6 @@ class _LocaydoAppState extends State<LocaydoApp> {
       case AppRoutes.productDetails:
         final product = settings.arguments;
         if (product == null) {
-          // ✅ رسالة موحدة
           return MaterialPageRoute(builder: (context) => _buildLoadingScreen());
         }
         return MaterialPageRoute(
@@ -240,7 +252,6 @@ class _LocaydoAppState extends State<LocaydoApp> {
         
         if (categoryId.isEmpty) {
           _log('❌ Invalid category details route');
-          // ✅ رسالة موحدة
           return MaterialPageRoute(builder: (context) => _buildLoadingScreen());
         }
         
@@ -254,7 +265,6 @@ class _LocaydoAppState extends State<LocaydoApp> {
       case AppRoutes.sellerView:
         final sellerId = settings.arguments as String? ?? '';
         if (sellerId.isEmpty) {
-          // ✅ رسالة موحدة
           return MaterialPageRoute(builder: (context) => _buildLoadingScreen());
         }
         return MaterialPageRoute(
@@ -274,10 +284,9 @@ class _LocaydoAppState extends State<LocaydoApp> {
 
       case AppRoutes.main:
       case AppRoutes.notFound:
-        // ✅ رسالة موحدة
         return MaterialPageRoute(builder: (context) => _buildLoadingScreen());
 
-      default:
+      default :
         return _unknownRoute(settings);
     }
   }
@@ -289,7 +298,6 @@ class _LocaydoAppState extends State<LocaydoApp> {
 
   MaterialPageRoute _unknownRoute(RouteSettings settings) {
     _log('❌ Unknown route: ${settings.name}');
-    // ✅ رسالة موحدة
     return MaterialPageRoute(
       builder: (context) => _buildLoadingScreen(),
       settings: settings,

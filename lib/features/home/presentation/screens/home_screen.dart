@@ -1,9 +1,12 @@
 // lib/features/home/presentation/screens/home_screen.dart
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:locaydo_app/core/constants/app_assets.dart';
 import 'package:locaydo_app/core/constants/app_strings.dart';
 import 'package:locaydo_app/core/enums/product_enums.dart';
@@ -27,11 +30,28 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _scrollController = ScrollController();
+  late final StreamSubscription<User?> _authStateSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // ✅ مراقبة حالة تسجيل الدخول/الخروج
+    _authStateSubscription = FirebaseAuth.instance.authStateChanges().listen((User? user) async {
+      if (user != null) {
+        debugPrint('✅ User logged in, reinitializing HomeViewModel');
+        if (mounted) {
+          await context.read<HomeViewModel>().onUserChanged();
+        }
+      } else {
+        debugPrint('❌ User logged out, clearing HomeViewModel data');
+        if (mounted) {
+          context.read<HomeViewModel>().clearAllData();
+        }
+      }
+    });
+    
     if (kDebugMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         try {
@@ -45,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _authStateSubscription.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.dispose();
     super.dispose();
@@ -53,7 +74,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      context.read<HomeViewModel>().refreshProducts();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        context.read<HomeViewModel>().refreshProducts();
+      }
     }
   }
 
@@ -235,11 +259,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildProductsGrid(HomeViewModel vm) {
+    // ✅ التحقق من وجود مستخدم قبل عرض المنتجات
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return SliverToBoxAdapter(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Column(
+              children: [
+                Icon(Icons.lock_outline,
+                    size: 64,
+                    color: AppColors.textPlaceholder.withValues(alpha: 0.5)),
+                const SizedBox(height: 16),
+                Text(
+                  'الرجاء تسجيل الدخول',
+                  style: AppTextStyles.bodyLarge(context)
+                      .copyWith(color: AppColors.textPlaceholder),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () => Navigator.pushNamed(context, AppRoutes.login),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryDark,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('تسجيل الدخول'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // ✅ ✅ ✅ الحل: إضافة حالة التحميل الأولي
+    // 1. حالة التحميل الأولي (عند فتح التطبيق لأول مرة)
+    if (vm.isInitialLoad) {
+      return const SliverToBoxAdapter(
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Column(
+              children: [
+                CircularProgressIndicator(color: AppColors.primaryDark),
+                SizedBox(height: 16),
+                Text('جاري تحميل المنتجات...'),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // 2. حالة الخطأ في الشبكة
     if (vm.hasNetworkError && vm.allProducts.isEmpty) {
       return SliverToBoxAdapter(child: _ErrorState(vm: vm));
     }
-    if (vm.isCategoryChanging ||
-        (vm.isLoading && vm.allProducts.isEmpty)) {
+    
+    // 3. حالة تغيير الفئة أو تحميل
+    if (vm.isCategoryChanging || (vm.isLoading && vm.allProducts.isEmpty)) {
       return const SliverToBoxAdapter(
         child: Center(
           child: Padding(
@@ -250,11 +329,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
 
+    // 4. عرض المنتجات
     final available = vm.filteredProducts
         .where((p) => p.isAvailable)
         .toList();
 
-    if (available.isEmpty) {
+    if (available.isEmpty && !vm.isInitialLoad) {
       return SliverToBoxAdapter(child: _EmptyState(vm: vm));
     }
 

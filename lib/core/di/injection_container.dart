@@ -1,8 +1,7 @@
-// lib/core/di/injection_container.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:locaydo_app/core/enums/search_enums.dart';
+import 'package:locaydo_app/core/services/hive_cache_service.dart';
 import 'package:locaydo_app/core/utils/logger.dart';
 import 'package:locaydo_app/features/auth/data/repositories/auth_repository_impl.dart';
 import 'package:locaydo_app/features/auth/domain/repositories/auth_repository.dart';
@@ -21,13 +20,14 @@ import 'package:locaydo_app/features/products/data/repositories/product_reposito
 import 'package:locaydo_app/features/products/domain/repositories/product_repository.dart';
 import 'package:locaydo_app/features/profile/data/repositories/profile_repository_impl.dart';
 import 'package:locaydo_app/features/profile/domain/repositories/profile_repository.dart';
-import 'package:locaydo_app/features/profile/presentation/viewmodels/profile_viewmodel.dart';
 import 'package:locaydo_app/features/profile/presentation/viewmodels/seller_products_viewmodel.dart';
 import 'package:locaydo_app/features/search/presentation/viewmodels/search_viewmodel.dart';
 import 'package:provider/provider.dart';
 import 'package:provider/single_child_widget.dart';
 
-List<SingleChildWidget> buildProviders() {
+List<SingleChildWidget> buildProviders({
+  required HiveCacheService hiveCacheService,
+}) {
   final logger = DebugLogger();
 
   final firebaseAuth = FirebaseAuth.instance;
@@ -59,18 +59,25 @@ List<SingleChildWidget> buildProviders() {
     auth: firebaseAuth,
   );
 
-  // ✅ Profile Repository - التصحيح: لا تمرر firestore و auth لأن الـ constructor لا يستقبلهما
+  // ✅ Profile Repository
   final ProfileRepository profileRepository = ProfileRepositoryImpl(
     logger: logger,
-    // ✅ لا تمرر firestore و auth هنا
   );
 
   // ✅ Home ViewModel
   final homeViewModel = HomeViewModel(
     logger: logger,
+    hiveCacheService: hiveCacheService,
     categoryRepository: categoryRepository,
     productRepository: productRepository,
     favoritesRepository: favoritesRepository,
+  );
+
+  // ✅ Favorites ViewModel
+  final favoritesViewModel = FavoritesViewModel(
+    logger: logger,
+    repository: favoritesRepository,
+    homeViewModel: homeViewModel,
   );
 
   return [
@@ -78,6 +85,7 @@ List<SingleChildWidget> buildProviders() {
     Provider<Logger>.value(value: logger),
     Provider<FirebaseAuth>.value(value: firebaseAuth),
     Provider<FirebaseFirestore>.value(value: firestore),
+    Provider<HiveCacheService>.value(value: hiveCacheService),
     
     // ✅ Providers للمستودعات
     Provider<AuthRepository>.value(value: authRepository),
@@ -111,28 +119,14 @@ List<SingleChildWidget> buildProviders() {
     // ✅ Home ViewModel
     ChangeNotifierProvider<HomeViewModel>.value(value: homeViewModel),
     
+    // ✅ Favorites ViewModel - يجب أن يكون بعد HomeViewModel
+    ChangeNotifierProvider<FavoritesViewModel>.value(value: favoritesViewModel),
+    
     // ✅ Categories ViewModel
     ChangeNotifierProvider<CategoriesViewModel>(
       create: (context) => CategoriesViewModel(
         logger: context.read<Logger>(),
         categoryRepository: context.read<CategoryRepository>(),
-      ),
-    ),
-    
-    // ✅ Favorites ViewModel
-    ChangeNotifierProvider<FavoritesViewModel>(
-      create: (context) => FavoritesViewModel(
-        logger: context.read<Logger>(),
-        repository: context.read<FavoritesRepositoryImpl>(),
-        homeViewModel: context.read<HomeViewModel>(),
-      ),
-    ),
-    
-    // ✅ Profile ViewModel
-    ChangeNotifierProvider<ProfileViewModel>(
-      create: (context) => ProfileViewModel(
-        repository: context.read<ProfileRepository>(),
-        logger: context.read<Logger>(),
       ),
     ),
     

@@ -1,5 +1,12 @@
+// lib/features/favorites/presentation/screens/favorites_screen.dart
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:locaydo_app/features/products/data/models/seller_product_model.dart';
+import 'package:provider/provider.dart';
 import 'package:locaydo_app/core/enums/favorites_enums.dart';
 import 'package:locaydo_app/core/enums/product_enums.dart';
 import 'package:locaydo_app/core/extensions/context_extensions.dart';
@@ -12,11 +19,9 @@ import 'package:locaydo_app/features/favorites/data/models/favorites_model.dart'
 import 'package:locaydo_app/features/favorites/presentation/viewmodels/favorites_viewmodel.dart';
 import 'package:locaydo_app/features/home/presentation/viewmodels/home_viewmodel.dart';
 import 'package:locaydo_app/features/products/data/models/product_model.dart';
-import 'package:locaydo_app/features/products/data/models/seller_product_model.dart';
 import 'package:locaydo_app/shared/widgets/common/button.dart';
 import 'package:locaydo_app/shared/widgets/common/favorite_button.dart';
 import 'package:locaydo_app/shared/widgets/product/product_card.dart';
-import 'package:provider/provider.dart';
 
 class FavoritesScreen extends StatefulWidget {
   const FavoritesScreen({super.key});
@@ -26,9 +31,10 @@ class FavoritesScreen extends StatefulWidget {
 }
 
 class _FavoritesScreenState extends State<FavoritesScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin {
   late final AnimationController _animCtrl;
   late final Animation<double> _fade;
+  late final StreamSubscription<User?> _authStateSubscription;
   final _logger = DebugLogger();
 
   @override
@@ -37,42 +43,28 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     _animCtrl = AppAnimations.createFadeSlideController(this);
     _fade = AppAnimations.createFadeAnimation(_animCtrl);
     _animCtrl.forward();
-    WidgetsBinding.instance.addObserver(this);
+    
+    // ✅ مراقبة حالة تسجيل الدخول/الخروج
+    _authStateSubscription = FirebaseAuth.instance.authStateChanges().listen((User? user) async {
+      if (user != null) {
+        _logger.log('✅ User logged in, reinitializing FavoritesViewModel');
+        if (mounted) {
+          await context.read<FavoritesViewModel>().onUserChanged();
+        }
+      } else {
+        _logger.log('❌ User logged out, clearing FavoritesViewModel data');
+        if (mounted) {
+          context.read<FavoritesViewModel>().clearAllData();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
+    _authStateSubscription.cancel();
     _animCtrl.dispose();
-    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _logger.log('🔄 App resumed, refreshing favorites...');
-      _refreshFavorites();
-    }
-  }
-  
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _refreshFavorites();
-      }
-    });
-  }
-  
-  Future<void> _refreshFavorites() async {
-    final favoritesViewModel = context.read<FavoritesViewModel>();
-    final homeViewModel = context.read<HomeViewModel>();
-    
-    await homeViewModel.syncFavoritesFromFirebase();
-    await favoritesViewModel.loadFavoriteProducts();
-    await favoritesViewModel.loadFavoriteSellers();
   }
 
   @override
@@ -100,7 +92,6 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                 width: context.contentWidth,
                 child: RefreshIndicator(
                   onRefresh: () async {
-                    await _refreshFavorites();
                     await viewModel.refreshFavorites();
                   },
                   color: AppColors.primary1,
@@ -116,7 +107,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                         ),
                       ),
                       const SliverToBoxAdapter(child: SizedBox(height: 8)),
-                      if (viewModel.isLoading)
+                      if (viewModel.isLoading && viewModel.favoriteProducts.isEmpty && viewModel.favoriteSellers.isEmpty)
                         const SliverToBoxAdapter(
                           child: Center(
                             child: Padding(
@@ -148,7 +139,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     
     final allFavorites = viewModel.favoriteProducts;
     
-    if (allFavorites.isEmpty) {
+    if (allFavorites.isEmpty && !viewModel.isLoading) {
       return _emptySliver(
         context,
         icon: Icons.favorite_border_rounded,
@@ -169,7 +160,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         delegate: SliverChildBuilderDelegate((ctx, i) {
           final favoriteProduct = allFavorites[i];
           
-          final fullProduct = homeViewModel.getProductById(favoriteProduct.id);
+          final fullProduct = homeViewModel.getProductByIdIncludingSold(favoriteProduct.id);
           final isSold = fullProduct?.status == ProductStatus.sold;
           final sellerId = fullProduct?.sellerId ?? '';
           final sellerName = fullProduct?.sellerName ?? '';
@@ -241,9 +232,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     );
   }
 
-  // ✅ ✅ ✅ الجزء المعدل - استخدام Consumer<HomeViewModel> للبائعين ✅ ✅ ✅
   Widget _buildSellersSliver(BuildContext context, FavoritesViewModel viewModel) {
-    if (viewModel.favoriteSellers.isEmpty) {
+    if (viewModel.favoriteSellers.isEmpty && !viewModel.isLoading) {
       return _emptySliver(
         context,
         icon: Icons.people_outline_rounded,
@@ -264,19 +254,17 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         delegate: SliverChildBuilderDelegate((ctx, i) {
           final seller = viewModel.favoriteSellers[i];
           
-          // ✅ استخدام Consumer<HomeViewModel> لمراقبة حالة المتابعة
           return Consumer<HomeViewModel>(
             builder: (context, homeViewModel, child) {
-              // ✅ الحصول على حالة المتابعة الحالية من HomeViewModel
               final isFollowed = homeViewModel.isSellerFavoriteSync(seller.id);
               
               return FadeTransition(
                 opacity: _fade,
                 child: _SellerCard(
-                  key: ValueKey('${seller.id}_$isFollowed'), // ✅ تحديث المفتاح عند تغيير الحالة
+                  key: ValueKey('${seller.id}_$isFollowed'),
                   seller: seller,
                   isFollowed: isFollowed,
-                  onFollowTap: () => _toggleSellerFollow(seller.id, viewModel),
+                  onFollowTap: () => viewModel.toggleSellerFollow(seller.id),
                   onTap: () => viewModel.onSellerTap(seller),
                 ),
               );
@@ -285,21 +273,6 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         }, childCount: viewModel.favoriteSellers.length),
       ),
     );
-  }
-
-  // ✅ دالة لمتابعة/إلغاء متابعة بائع
-  Future<void> _toggleSellerFollow(String sellerId, FavoritesViewModel viewModel) async {
-    final homeViewModel = context.read<HomeViewModel>();
-    
-    _logger.log('🔄 Toggling seller follow: $sellerId');
-    
-    // ✅ تحديث HomeViewModel أولاً (سيؤدي إلى تحديث الواجهة تلقائياً)
-    await homeViewModel.toggleFavoriteSeller(sellerId);
-    
-    // ✅ تحديث FavoritesViewModel في الخلفية
-    await viewModel.loadFavoriteSellers();
-    
-    _logger.log('✅ Seller follow toggled successfully');
   }
 
   SliverToBoxAdapter _emptySliver(
@@ -371,7 +344,7 @@ class _TabsRow extends StatelessWidget {
   }
 }
 
-// ── Seller Card (معدل) ─────────────────────────────────────────────────────────
+// ── Seller Card ─────────────────────────────────────────────────────────
 
 class _SellerCard extends StatelessWidget {
   final FavoriteSeller seller;
@@ -494,11 +467,14 @@ class _SellerCard extends StatelessWidget {
                 ],
               ),
             ),
-            FavoriteButton(
-              isFavorite: isFollowed,
-              onTap: onFollowTap,
-              position: FavoriteButtonPosition.topLeft,
-              size: FavoriteButtonSize.medium,
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: FavoriteButton(
+                isFavorite: isFollowed,
+                onTap: onFollowTap,
+                position: FavoriteButtonPosition.topLeft,
+                size: FavoriteButtonSize.medium,
+              ),
             ),
           ],
         ),

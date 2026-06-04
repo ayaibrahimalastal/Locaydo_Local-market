@@ -1,3 +1,5 @@
+// lib/features/products/data/repositories/product_repository_impl.dart
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:locaydo_app/core/enums/product_enums.dart';
 import 'package:locaydo_app/core/utils/logger.dart';
@@ -35,6 +37,28 @@ class ProductRepositoryImpl implements ProductRepository {
   }
 
   @override
+  Stream<List<ProductModel>> watchAllProducts() {
+    try {
+      _logger.log('📡 Setting up real-time stream for all products (including sold)');
+      return _firestore
+          .collection('products')
+          // ✅ تم إزالة فلترة المنتجات المباعة
+          .snapshots()
+          .map((snapshot) {
+            final products = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return ProductModel.fromMap(data, doc.id);
+            }).toList();
+            _logger.log('📡 Stream update: ${products.length} products (including sold)');
+            return products;
+          });
+    } catch (e) {
+      _logger.error('❌ Failed to watch all products', e);
+      return Stream.error(e);
+    }
+  }
+
+  @override
   Future<List<ProductModel>> getProductsByCategory(String categoryId) async {
     try {
       _logger.log('📦 Getting products for category: $categoryId');
@@ -57,11 +81,33 @@ class ProductRepositoryImpl implements ProductRepository {
   }
 
   @override
+  Stream<List<ProductModel>> watchProductsByCategory(String categoryId) {
+    try {
+      _logger.log('📡 Setting up real-time stream for category: $categoryId (including sold)');
+      return _firestore
+          .collection('products')
+          .where('category', isEqualTo: categoryId)
+          // ✅ تم إزالة فلترة المنتجات المباعة
+          .snapshots()
+          .map((snapshot) {
+            final products = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return ProductModel.fromMap(data, doc.id);
+            }).toList();
+            _logger.log('📡 Stream update for category $categoryId: ${products.length} products');
+            return products;
+          });
+    } catch (e) {
+      _logger.error('❌ Failed to watch products by category', e);
+      return Stream.error(e);
+    }
+  }
+
+  @override
   Future<List<ProductModel>> getProductsBySeller(String sellerId) async {
     try {
       _logger.log('📦 Getting products for seller: $sellerId');
       
-      // ✅ تصحيح: البحث باستخدام sellerId
       final snapshot = await _firestore
           .collection('products')
           .where('sellerId', isEqualTo: sellerId)
@@ -81,21 +127,41 @@ class ProductRepositoryImpl implements ProductRepository {
   }
 
   @override
+  Stream<List<ProductModel>> watchProductsBySeller(String sellerId) {
+    try {
+      _logger.log('📡 Setting up real-time stream for seller: $sellerId');
+      return _firestore
+          .collection('products')
+          .where('sellerId', isEqualTo: sellerId)
+          .snapshots()
+          .map((snapshot) {
+            final products = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return ProductModel.fromMap(data, doc.id);
+            }).toList();
+            _logger.log('📡 Stream update for seller $sellerId: ${products.length} products');
+            return products;
+          });
+    } catch (e) {
+      _logger.error('❌ Failed to watch products by seller', e);
+      return Stream.error(e);
+    }
+  }
+
+  @override
   Future<List<SellerProduct>> getSellerProducts(String sellerId) async {
     try {
       _logger.log('📦 Getting seller products for: $sellerId');
       
-      // ✅ تصحيح: البحث باستخدام sellerId بدلاً من userId
       final snapshot = await _firestore
           .collection('products')
-          .where('sellerId', isEqualTo: sellerId)  // ✅ استخدام sellerId
+          .where('sellerId', isEqualTo: sellerId)
           .get();
 
       _logger.log('📦 Found ${snapshot.docs.length} documents');
 
       final products = snapshot.docs.map((doc) {
         final data = doc.data();
-        _logger.log('📦 Product doc: id=${doc.id}, sellerId=${data['sellerId']}, userId=${data['userId']}');
         return SellerProduct.fromMap(data, doc.id);
       }).toList();
 
@@ -181,6 +247,26 @@ class ProductRepositoryImpl implements ProductRepository {
     } catch (e) {
       _logger.error('❌ Failed to get product by id', e);
       return null;
+    }
+  }
+
+  @override
+  Stream<ProductModel?> watchProductById(String productId) {
+    try {
+      _logger.log('📡 Setting up real-time stream for product: $productId');
+      return _firestore
+          .collection('products')
+          .doc(productId)
+          .snapshots()
+          .map((doc) {
+            if (doc.exists) {
+              return ProductModel.fromMap(doc.data()!, doc.id);
+            }
+            return null;
+          });
+    } catch (e) {
+      _logger.error('❌ Failed to watch product by id', e);
+      return Stream.error(e);
     }
   }
 
